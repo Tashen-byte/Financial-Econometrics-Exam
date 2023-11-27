@@ -493,8 +493,9 @@ With all of the above information, we are able to get a better understanding of 
 # Question Three
 This question requires a Texevier format.
 ```{r}
+library(Texevier)
 # Texevier::create_template(directory = "Questions",
-#                           template_name = "Question1"
+#                           template_name = "Question 3"
 # )
 ```
 
@@ -684,14 +685,41 @@ ALSI %>% select(-Return)
 
 
 # Question Four: Flows Analysis
-
+This question makes me think that it is appropriate to make use of PCA, as this will identify which funds are winners and which are losers.
 ```{r}
 Flows <- read_rds("data/ASISA_Flows.rds")
 Rets <- read_rds("data/ASISA_Rets.rds")
 ```
+I only want to look at the funds that are present for more than 4 years. 
+```{r}
+Rets <- Rets %>% 
+    mutate(Year = format(date, "%Y")) %>% 
+    group_by(Fund) %>% 
+    filter( n_distinct(Year) > 4)
+median(Rets$Returns)
+```
 
+I first need to filter the data set. I think that Returns greater than 15% are high and returns lower than 1% are low.
+PCA requires the returns to be in Log form and de-meaned.
+```{r}
 
+Rets_log <- Rets %>% 
+    group_by(Fund) %>% 
+    arrange(date) %>% 
+    mutate(Returns = ifelse(Returns > 0.15, 0.15, ifelse(Returns < 0.01, 0.01, Returns))) %>% 
+    mutate(Returns = Returns - mean(Returns)) %>% 
+    mutate(Returns = log(Returns))
+    
+```
+Using the princomp package.
+```{r}
+Rets_wide <- Rets_log %>% 
+    select(date, Fund, Returns) %>% 
+    spread(Fund, Returns) %>% 
+    select(-date)
 
+pca <- prcomp(Rets_wide)
+```
 
 # Question Five
 This question provides a lot of information relating to currencies. I have decided to utilise the _cncy_IV_ and the _cncy_ data sets, as I thought it was the most applicable to this question after reading the text files provided for each data set. 
