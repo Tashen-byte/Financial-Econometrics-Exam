@@ -1,0 +1,1127 @@
+---
+output:
+  md_document:
+    variant: markdown_github
+---
+
+# Financial Econometrics Exam 
+Dear Nico, I hope this attempt of the exam is to your pleasing. I must admit that it was enjoyable to begin with, but once I started running into errors and misinterpreting questions, my stress levels soared through the roof. 
+
+However, I have learnt much throughout the course and will definitely use the knowledge gained as talking points at the next braai.
+
+## Set-Up
+Each question has its own heading in this document and the final answers, in a pdf format, can be found in the _Questions_ folder. 
+
+The data wrangling is all done here and I have provided my thought process for each chunk.
+
+### Relevant packages
+```{r}
+library(tidyverse);library(gt);library(tbl2xts);library(PerformanceAnalytics);library(lubridate);library(tbl2xts);library(RcppRoll);library(rugarch);library(forecast)
+```
+
+```{r}
+list.files('/code',full.names = T, recursive = T) %>% 
+    as.list() %>% 
+    walk(~source(.))
+
+setwd("C:/Users/tashe/Desktop/Financial Econometrics Exam") #Nico Please note that you will need to set your own Working Directory.
+```
+
+
+# Question One
+Load the relevant data. 
+```{r}
+ASISA <- read_rds("data/ASISA_Rets.rds")
+BM <- read_rds("data/Capped_SWIX.rds")
+AI_Fund <- read_rds("data/AI_Max_Fund.rds")
+```
+
+Set directory for saving plots as images.
+```{r}
+Q1wd<- setwd("C:/Users/tashe/Desktop/Financial Econometrics Exam/Questions/Question One/Figures")
+```
+
+First I would like to compare each fund to the benchmark, by analysing the difference between the returns. 
+We note that the AI_Fund returns are provided, so it is a simple process of joining the two data sets by data, adding a difference column and plotting the results. 
+```{r}
+AB <- left_join(AI_Fund, BM, by = "date") %>% 
+    mutate(Diff = AI_Fund - Returns) %>% 
+    select(-Tickers)
+#Now plot AI_Fund
+AB_Plot <- AB %>% 
+ggplot() +
+geom_line(aes(date, Diff), color = "cornflowerblue") +
+geom_hline( yintercept = 0, color = "black", linetype = "dashed") +
+labs(title = "AI_Fund Performance Relative to the Benchmark (Capped SWIX)", 
+     subtitle = "Difference in Returns", x = "Date", y = "Returns") +
+fmxdat::theme_fmx()
+AB_Plot
+#save to folder
+jpeg("AI_Fund.jpg", quality = 100, width = 600)
+print(AB_Plot)
+dev.off()
+```
+Anything above the red line means that the AI_Fund outperforms the benchmark, and anything below shows that the fund is worse off. 
+
+For the AISA data set, it is important to note that the fees need to be taken away from the returns. Since there are over 1000 fund types. Fees must be subtracted from active fund managers. 
+```{r}
+act_mean <- ASISA %>% 
+    arrange(date) %>% 
+    group_by(date) %>% 
+    filter(Index == "No") %>% 
+    mutate(Returns = Returns - 0.001) %>% #Fees
+    summarise( Returns_active = mean(Returns))
+active <- left_join(act_mean, BM %>% rename(Returns_BM = "Returns"), by = "date") %>% 
+    mutate(Difference = Returns_active - Returns_BM) %>% 
+    select(-Tickers)
+
+active_plot <- active %>% 
+ggplot() +
+geom_line(aes(date, Difference), color = "lightsalmon3") +
+geom_hline( yintercept = 0, color = "black", linetype = "dashed") +
+labs(title = "Active Fund Manager Performance Relative to the Benchmark (Capped SWIX)", subtitle = "Difference in returns", x = "Date", y = "Returns") +
+fmxdat::theme_fmx()
+active_plot
+
+jpeg("acive_plot.jpg", quality = 100, width = 600, units = "px")
+print(active_plot)
+dev.off()
+```
+
+Let's now look at a clearer metric, which is the annualised returns.
+```{r}
+library(tbl2xts);library(PerformanceAnalytics);library(fmxdat)
+#Combine the two data sets. 
+combined_data <- left_join(active %>% select(-Difference), AB %>% select(-Diff, -Returns), by = "date") %>% 
+    gather(Name, Returns, -date)
+
+
+cdx <- 
+  tbl_xts(combined_data, cols_to_xts = Returns, spread_by = Name)
+cdx_frame <- 
+  
+    bind_rows(
+      # Don't annualize for less than a year, e.g.:
+      cdx %>% tail(6) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "A"),
+      
+      cdx %>% tail(12) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "B"),
+      
+      cdx %>% tail(36) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "C"),
+      
+      cdx %>% tail(60) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "D"),
+      
+    ) %>% 
+    data.frame()%>%
+    gather(Name, mu, -Freq)
+
+# Labels
+to_string <- as_labeller(c(`A` = "6 Months", `B` = "1 Year", `C` = "3 Years", `D` = "5 Years"))
+
+ cdx_plot  <- 
+    
+  cdx_frame %>%
+  
+  # Compare to (they are the exact same):
+  # dfplotxts %>%
+    
+  ggplot() + 
+    
+  geom_bar( aes(Name, mu, fill = Name), stat="identity") + 
+    
+  facet_wrap(~Freq, labeller = to_string, nrow = 1) + 
+    
+  labs(x = "", y = "Returns (Ann.)" , caption = "Note:\nReturns in excess of a year are in annualized terms.") + 
+    
+  fmx_fills() + 
+    
+  geom_label(aes(Name, mu, label = paste0( round(mu, 4)*100, "%" )), size = ggpts(8), alpha = 0.35, fontface = "bold", nudge_y = 0.002) + 
+    
+  theme_fmx(CustomCaption = T, title.size = ggpts(43), subtitle.size = ggpts(38), 
+                caption.size = ggpts(30), 
+            
+                axis.size = ggpts(37), 
+            
+                legend.size = ggpts(35),legend.pos = "top") +
+
+  theme(axis.text.x = element_blank(), axis.title.y = element_text(vjust=2)) + 
+    
+  theme(strip.text.x = element_text(face = "bold", size = ggpts(35), margin = margin(.1, 0, .1, 0, "cm"))) 
+  
+cdx_plot
+
+#save to figures folder
+jpeg("cdx_plot.jpg", quality = 100, width = 600, units = "px")
+print(cdx_plot)
+dev.off()
+```
+
+## Annualised Financial Returns Table
+```{r}
+source("C:/Users/tashe/Desktop/Financial Econometrics Exam/code/Statistics_Table.R")
+
+names(combined_data) <- c("date", "Return_Type", "Returns")
+BM <-  "Returns_BM"
+    
+Yrs_lookback <- 10
+NA_Check <- 0.8
+
+fund_dat <- combined_data %>% 
+    filter(Return_Type == c("Returns_active", "AI_Fund"))
+
+###############################
+Statistics_table <- function(combined_data, BM, Yrs_lookback, NA_Check){
+
+    data_included <- combined_data %>%
+        filter(date >= fmxdat::safe_year_min(datesel = last(date), N = Yrs_lookback))
+
+    data_considered <- data_included %>%
+        group_by(Return_Type) %>%
+        summarise(N_noNA = sum(!is.na(Returns))/length(unique(data_included$date))) %>%
+        filter(N_noNA > NA_Check) %>%
+        pull(Return_Type)
+
+    data_xts <- data_included %>%
+        filter(Return_Type %in% data_considered) %>%
+        tbl_xts(cols_to_xts = Returns, spread_by = Return_Type, Colnames_Exact = T)
+
+    Bench_xts <- data_included %>%
+        filter(Return_Type %in% BM) %>%
+        tbl_xts(cols_to_xts = Returns, Colnames_Exact = T)
+
+    library(PerformanceAnalytics)
+
+    Moments <- bind_rows(
+        data.frame(Return.cumulative(data_xts) ) %>% round(., 3),
+        data.frame(Return.annualized(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::Return.annualized.excess(data_xts, Bench_xts) ) %>% round(., 3),
+        data.frame(sd.annualized(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::AdjustedSharpeRatio( data_xts ) ) %>% round(., 3),
+        data.frame(PainIndex(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+        data.frame(AverageDrawdown(data_xts, scale = 12)) %>% round(., 3),
+        data.frame(fmxdat::Safe_TE(Ra = data_xts, Rb = Bench_xts, scale = 12)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::InformationRatio(Ra = data_xts, Rb = Bench_xts)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::CAPM.beta(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::CAPM.beta.bull(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::CAPM.beta.bear(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+        data.frame(PerformanceAnalytics::UpDownRatios(Ra = data_xts, Rb = Bench_xts, method = "Percent", side = "Up")) %>% round(., 3),
+        data.frame(PerformanceAnalytics::CVaR(R = data_xts, p = 0.05, method = "modified")) %>%
+            round(., 3)
+    ) %>% 
+
+    tibble::rownames_to_column("Info") %>%
+        mutate(Period = glue::glue("Last {Yrs_lookback} Years"),
+               Info = c("Cum Returns", "Returns (Ann.)", "Returns Excess (Ann.)", "SD (Ann.)", "Adj. Sharpe Ratio", "Pain Index",                                                                          "Avg DD", "Tracking Error", "Information Ratio", "Beta", "Beta Bull", "Beta Bear", "Up-Down Ratio", "Modified CVaR")) %>%
+        relocate(Period, .before = Info) %>%
+        as_tibble()
+
+    # This line replaces the `.` with a space.
+    # Note the forward slashes, as `.` there means everything, `\\.` means a full-stop
+    colnames(Moments) <- gsub("\\.", " ", colnames(Moments))
+    Moments
+}
+
+######################################
+
+
+
+Tab_stats <- bind_rows(
+Statistics_table(combined_data , BM, Yrs_lookback = 3, NA_Check),
+Statistics_table(combined_data, BM, Yrs_lookback = 5, NA_Check) )
+
+Make_perc <-c( "Cum Returns", "Returns (Ann.)", "Returns Excess (Ann.)", "SD (Ann.)",
+"Avg DD", "Tracking Error")
+Rows_to_Perc <-Tab_stats %>% 
+    mutate(RN=row_number()) %>% 
+    filter(Info %in% Make_perc) %>%
+    pull(RN)
+
+colnams <- colnames(Tab_stats)[-1:-2]
+Cols_length <- ncol(Tab_stats)
+
+table <- Tab_stats %>% 
+    gt::gt(groupname_col = 'Period', caption = 'Fund Moments Comparison') %>%
+tab_header(title = glue::glue("Index Statistics: Relative to {BM}")) %>%
+fmt_percent(columns = 3:Cols_length, rows = Rows_to_Perc, decimals = 1 ) %>%
+sub_missing(columns = all_of(colnams),missing_text = '-') %>%
+tab_footnote( footnote = 'JSAPY is the local property index, consisting of REITS companies.',locations = cells_column_labels(columns = contains('JSAPYTR'))) %>%
+tab_style(style = list(cell_fill(color = 'gray27', alpha = 0.15),
+cell_text(size = 'large', weight = 'bold',align = 'left')),locations = cells_row_groups())
+
+tb_plot <- table %>%
+tab_options(data_row.padding = px(4),table.width = pct(100),
+column_labels.font.size = pct(50),
+column_labels.vlines.width = 1, table.font.size = pct(80)) %>%
+tab_options(data_row.padding = px(6),
+column_labels.font.size = pct(100)) %>%
+tab_style(style = cell_text(weight = 1200, align = 'left'),locations = cells_title(groups = 'title')) %>%
+tab_style(style = cell_text(color = 'darkgrey', transform = 'uppercase', align = 'center'),
+locations = cells_column_labels(everything()))
+
+#This was saved using the Manual Export function in R. 
+
+```
+
+
+
+# Question Two
+```{r}
+setwd("C:/Users/tashe/Desktop/Financial Econometrics Exam")
+```
+
+The article speaks about investors and their intentions to move their portfolio holdings towards USD Indexes, as the "opportunity" to obtain higher returns is attractive. The Rand has depreciated over the years and investors looking at similar indexes compared to their local portfolio, believe that if they switch to a currency appreciating against the Rand, they can increase their portfolio returns. 
+
+```{r}
+#Data
+Indexes <- read_rds("data/Cncy_Hedge_Assets.rds")
+ZAR <- read_rds("data/Monthly_zar.rds")
+```
+The data sets are based on two different time lines/periods. This means that we first need to convert the Indexes to a monthly basis.
+```{r}
+Indexes <- Indexes %>% 
+    mutate(Year = format(date, "%Y"), Month = format(date, "%B")) %>% 
+    group_by(Year,Month) %>% 
+    filter(date == last(date)) %>% 
+    ungroup()
+
+#Now we can join both Data sets. 
+combo <- left_join(Indexes, ZAR %>% select(date, value), by = "date")
+combo <- combo %>% 
+    na.locf(value, na.rm = T, fromLast = FALSE, maxgap = 3) #Using the last known dollar value. 
+```
+Now we can convert the US Global Indexes to ZAR value. 
+```{r}
+combo <- combo %>% 
+    mutate(MSCI_ACWI = MSCI_ACWI*value,
+           Bbg_Agg = Bbg_Agg*value) %>% 
+    select(date:ALBI)
+```
+Now the data is in an appropriate format. We have the local Index; _ALBI_ and _J433_, and the Global Index; _Bbg_Agg_ and _MSCI_ACWI_. Let's first take a look at the movement of the ZAR.USD value over time. 
+```{r}
+ZAR_plot <- ZAR %>% 
+    ggplot()+
+    geom_line(aes(date, value), color = "blue", lwd = 0.6) +
+    ylab("Rand per USD")+
+    xlab("Date")+
+    labs(title = "USD to ZAR movement",
+         subtitle = "Currency fluctuations")+
+    fmxdat::theme_fmx()
+fmxdat::finplot(ZAR_plot)
+```
+As we can see the ZAR has been out-shined by the USD, especially over the last 2 decades, which could cause some investors to lean more towards holding foreign assets. 
+
+Let's assess and compare the local to foreign Indexes. First let's take a look at the bonds.
+```{r}
+#Let's directly compare the bonds
+Bond_plot <- combo %>% 
+    select(date, Bbg_Agg, ALBI) %>% 
+    gather(Type, value, -date) %>% 
+    ggplot()+
+    geom_line(aes(date, value, color = as.factor(Type)))+
+    ylab("Value (Rand)")+
+    xlab("Date")+
+    labs(title = "Bond Movement",
+         subtitle = "Local (ALBI) and Foreign (Bbg_Agg)")+
+    fmxdat::theme_fmx()
+Bond_plot
+```
+We note that the movement of the local listing, in red, is much more stable around zero. This means that the returns are considered safe and this is the perception that people have about bonds. The global bond index, in teal, is much more volatile.
+
+Let's take a look at the equity market.
+```{r}
+Equity_plot <- combo %>% 
+    select(date, J433, MSCI_ACWI) %>% 
+    gather(Type, value, -date) %>% 
+    ggplot()+
+    geom_line(aes(date, value, color = as.factor(Type)))+
+    ylab("Value (Rand)")+
+    xlab("Date")+
+    labs(title = "Equity Movement",
+         subtitle = "Local (J433) and Foreign (MSCI_ACWI)")+
+    fmxdat::theme_fmx()
+Equity_plot
+```
+Again, the local equity movement, in red, is significantly lower than the global equity movement, in teal. 
+
+However, these direct comparisons must not be the only metric utilised when formulating an argument for holding off-shore assets to increasing the portfolio exposure. We note that there is more opportunity to make significantly larger gains, but there is also a great deal of loss that can occur. The idea is to obtain the most growth and leverage the USD appreciation over holding Rand Indexes.
+
+Let's look at the Rolling 120-day Beta, as this information will indicate the volatility of the Index movements.
+```{r}
+gt <- combo %>% 
+    gather(Index, Returns, -date) %>% 
+    tbl_xts(tblData = ., cols_to_xts = Returns, spread_by = Index)
+PerformanceAnalytics::chart.RollingRegression(Ra = gt$Bbg_Agg , Rb = gt$ALBI, width=120,attribute = c("Beta"), legend.loc = "top")
+```
+This rolling regression further supports that the global bond market holds higher risk compared to the ALBI.
+```{r}
+PerformanceAnalytics::chart.RollingRegression(Ra = gt$MSCI_ACWI , Rb = gt$J433, width=120,attribute = c("Beta"), legend.loc = "top")
+```
+This rolling regression also indicates that the global equity market displays higher risk to a portfolio. 
+
+The returns process for the portfolio, with the constraints implemented, will be investigated below.
+```{r}
+garch_data <- combo %>% 
+    gather(Index, Returns, -date) %>% 
+    mutate(Log_Returns = log(abs(Returns))) %>% 
+    mutate(Scale_Log = (Log_Returns - mean(Log_Returns, na.rm = T)))
+
+garch_data <- left_join(garch_data,
+          garch_data %>% tbl_xts(., cols_to_xts = "Log_Returns", spread_by = "Index") %>% 
+      
+      PerformanceAnalytics::Return.clean(., method = c("none", "boudt", "geltner")[2], alpha = 0.01) %>% 
+      
+      tbl2xts::xts_tbl() %>% gather(Index, CleanedRet, -date) ,
+    by = c("date", "Index"))
+
+Local <- c("ALBI","J433")
+Global <- c("MSCI_ACWI", "Bbg_Agg")
+
+#Weights split. This is to see how the Calculation was done.
+# Local: 0.7. 
+#Local Equity = 0.7*0.6 = 42% 
+# Local Bonds: 0.7*0.4 = 28%
+#Global: 30%
+# Global Equity: 0.3*0.6 = 18%
+# Global Bonds = 0.3*0.4 = 12%
+
+garch_data_wt <- garch_data %>% 
+    mutate(weight = ifelse(Index == "J433", 0.42, 
+                           ifelse(Index == "ALBI", 0.28, 
+                                  ifelse(Index == "MSCI_ACWI", 0.18, 0.12)))) %>% 
+    tbl_xts(.,cols_to_xts = weight, spread_by = Index)
+
+garch_data_retxts <- garch_data %>%
+    tbl_xts(., cols_to_xts = "Returns", spread_by = "Index")
+
+
+
+Portfolio_dis_weight <- rmsfuns::Safe_Return.portfolio(garch_data_retxts, weight = garch_data_wt, geometric = FALSE)  
+
+#Create plots
+Portfolio_dis_weight_plot <- cbind(Portfolio_dis_weight, Portfolio_dis_weight^2, abs(Portfolio_dis_weight))
+colnames(Portfolio_dis_weight_plot) = c("Returns", "Returns_Sqd", "Returns_Abs")
+
+
+Portfolio_dis_weight_plot <- 
+Portfolio_dis_weight_plot %>% 
+    xts_tbl() %>% 
+gather(ReturnType, Returns, -date)
+
+ggplot(Portfolio_dis_weight_plot) + 
+geom_line(aes(x = date, y = Returns, colour = ReturnType, alpha = 0.5)) + 
+    
+labs(title = "Return Type Persistence: 70/30 & 60/40 Portfolio Split",
+     subtitle = "(70% Local;30% Global split; 60% Equity; 40% Bond)") + 
+facet_wrap(~ReturnType, nrow = 3, ncol = 1, scales = "free") + 
+guides(alpha = "none", colour = "none") + 
+fmxdat::theme_fmx()
+```
+We can see that there are still pockets of heteroskedasticity between the periods.The squared residuals show some persistence, which supports the use of GARCH model to further support against holding off-shore stock with the intent of outperforming the Rand.
+
+Fitting GARCH
+```{r}
+library(rugarch)
+#ARMA 1 process
+garch11 <- 
+  
+  ugarchspec(
+    
+    variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","fGARCH","apARCH")[1], 
+                          
+    garchOrder = c(1, 1)), 
+    
+    mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), #Armaorder specifies AR1
+    
+    distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[1])
+
+garch1 = ugarchfit(spec = garch11,data = Portfolio_dis_weight )
+```
+The LogLikelihood value of 215.1396 provides an indication that the model is of good fit. 
+
+Let's look at the persistence of variance> 
+```{r}
+persistence(garch1)
+```
+This value is less than 1, which is required. 
+Now, more interestingly, let's look at the volatility model fit.
+```{r}
+infocriteria(garch1)
+```
+We note that the levels of criteria that can be used. Let's look at another volatility fit model. 
+```{r}
+gjrgarch11 = ugarchspec(variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","fGARCH","apARCH")[2], 
+                                              
+                                              garchOrder = c(1, 1)), 
+                        
+                        mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+                        
+                        distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[3])
+
+garch2 = ugarchfit(spec = gjrgarch11, data = as.matrix(Portfolio_dis_weight))
+infocriteria(garch2)
+```
+So the garch1 model is a better fit for the portfolio insights. 
+
+Let's look at a better indicator of the true volatility of the portfolio returns. 
+```{r}
+pacman::p_load(RcppRoll)  # Great for fast estimation
+
+back = 100
+
+Portfolio_dis_weight <- Portfolio_dis_weight %>% 
+    xts_tbl()
+
+ Portfolio_dis_weight %>% 
+     mutate(Constant_var = sd(portfolio.returns)) %>% 
+     mutate(sqrtRet = sqrt(portfolio.returns^2)) %>% 
+mutate(Roller = roll_sd(portfolio.returns, n = back, fill = NA)) %>% 
+ggplot() + 
+geom_line(aes(date, sqrtRet), color = "steelblue") + 
+geom_hline(aes(date, yintercept = mean(Constant_var)), color = "red", 
+    alpha = 0.8, size = 2) + 
+geom_line(aes(date, y = Roller), color = "darkgreen", alpha = 0.8, 
+    size = 2) + 
+     xlab("Date")+
+     ylab("Portfolio Returns")+
+fmxdat::theme_fmx() + 
+labs(title = "Portfolio Var vs Constant Var")
+```
+This graph shows that utilising the constant variance as a proxy of risk is not suitable, as the red line displays the true nature of variance over time. 
+
+With all of the above information, we are able to get a better understanding of why hedging against the Rand is not a suitable strategy - especially if we are strictly looking at the USD to ZAR exchange rate over the years. 
+
+
+# Question Three
+This question requires a Texevier format.
+```{r}
+# Texevier::create_template(directory = "Questions",
+#                           template_name = "Question1"
+# )
+```
+
+First load the relevant data.
+```{r}
+list.files('code/',full.names = T, recursive = T) %>% 
+    as.list() %>% 
+    walk(~source(.))
+```
+
+```{r}
+ALSI <- read_rds("data/ALSI.rds")
+RebDays <- read_rds("data/Rebalance_days.rds")
+cur <- read_rds("data/Monthly_zar.rds")
+```
+Let's say that we  initially had R100 000 to start our portfolio with. Want to see the effect if we had invested in each strategy.
+```{r}
+source("C:/Users/tashe/Desktop/Financial Econometrics Exam/code/Missing_Data.R")
+library(rmsfuns)
+Begin <- 100000 #Initial Fund size
+
+#any Missing data?
+colSums(is.na(ALSI))
+#Let's look at the weights of the ALSI
+ALSI_weight <- ALSI %>% 
+    select(date, Tickers, J203) %>% 
+    spread(Tickers,J203) 
+
+ALSI_weight <- filling_in_the_gaps(ALSI_weight, fill_amalgam = "Drawn_Distribution_Collective")
+ALSI_weight_xts <- ALSI_weight %>% 
+    tbl_xts()
+
+#Transform the SWIX to xts
+SWIX_weight <- ALSI %>% 
+    select(date, Tickers, J403)%>% 
+    replace(is.na(.),0) %>% 
+    spread(Tickers, J403)
+SWIX_weight <- filling_in_the_gaps(SWIX_weight, fill_amalgam = "Drawn_Distribution_Collective")
+SWIX_weight_xts <- SWIX_weight %>% 
+    tbl_xts()
+
+#Returns
+Returns_overall <- ALSI %>% 
+    group_by(Tickers) %>% 
+     mutate_at(.vars = vars(Return), ~na.locf(., na.rm = F, maxgap = 5))
+
+Returns_overall <- Returns_overall %>% 
+    select(date, Tickers, Return) %>% 
+    spread(Tickers, Return) 
+
+Returns_overall <- filling_in_the_gaps(Returns_overall, fill_amalgam = "Drawn_Distribution_Collective")
+
+Returns_xts <- Returns_overall %>% 
+    tbl_xts()
+ALSI_RetPort <- rmsfuns::Safe_Return.portfolio(Returns_xts,
+                                               weights = ALSI_weight_xts,
+                                               lag_weights = TRUE,
+                                               verbose = TRUE,
+                                               contribution = TRUE, #allows for much more to be done with the object
+                                               value = Begin,
+                                               geometric = TRUE)
+
+SWIX_RetPort <- rmsfuns::Safe_Return.portfolio(Returns_xts,
+                                               weights = SWIX_weight_xts,
+                                               lag_weights = TRUE,
+                                               verbose = TRUE,
+                                               contribution = TRUE, #allows for much more to be done with the object
+                                               value = Begin,
+                                               geometric = TRUE)
+
+#ALSI Information
+ALSI_Contrib <- ALSI_RetPort$"contribution" %>% 
+    xts_tbl() %>% 
+    mutate(date = lag(date), date = coalesce(date, index(ALSI_weight_xts)[1]))
+ALSI_BPValue <- ALSI_RetPort$"BOP.Value" %>% 
+    xts_tbl() %>% 
+    mutate(date = lag(date), date = coalesce(date, index(ALSI_weight_xts)[1]))
+
+#SWIX Inforamtion
+SWIX_Contrib <- SWIX_RetPort$"contribution" %>% 
+    xts_tbl() %>% 
+    mutate(date = lag(date), date = coalesce(date, index(SWIX_weight_xts)[1]))
+SWIX_BPValue <- SWIX_RetPort$"BOP.Value" %>% 
+    xts_tbl() %>% 
+    mutate(date = lag(date), date = coalesce(date, index(SWIX_weight_xts)[1]))
+
+ names(ALSI_Contrib) <- c("date", names(ALSI_RetPort$"contribution"))
+    names(ALSI_BPValue) <- c("date", names(ALSI_RetPort$"BOP.Value"))
+    names(SWIX_Contrib) <- c("date", names(ALSI_RetPort$"contribution"))
+    names(SWIX_BPValue) <- c("date", names(ALSI_RetPort$"BOP.Value"))
+    
+#Bind all together
+DF_ALSI <- 
+      left_join(ALSI_weight %>% gather(Tickers, weight,-date),
+                ALSI_BPValue %>% gather(Tickers, value_held, -date),
+                by = c("date", "Tickers") ) %>% 
+      
+      left_join(.,
+                ALSI_Contrib %>% gather(Tickers, Contribution, -date),
+                by = c("date", "Tickers")) %>% 
+    left_join(.,
+              Returns_overall %>% gather(Tickers, Return, -date),
+              by = c("date","Tickers"))
+    
+DF_SWIX <- 
+      left_join(SWIX_weight %>% gather(Tickers, weight, -date),
+                SWIX_BPValue %>% gather(Tickers, value_held, -date),
+                by = c("date", "Tickers") ) %>% 
+      
+      left_join(.,
+                SWIX_Contrib %>% gather(Tickers, Contribution, -date),
+                by = c("date", "Tickers") ) %>% 
+      
+      left_join(.,
+              Returns_overall %>% gather(Tickers, Return, -date),
+              by = c("date","Tickers"))
+
+# Calculate Portfolio Returns:
+DF_ALSI_Ret <- 
+    DF_ALSI %>% 
+    group_by(date) %>% 
+    summarise(PortfolioReturn = sum(Return*weight, na.rm =TRUE)) %>% 
+      filter(PortfolioReturn != 0)
+      
+# Calculate Portfolio Returns:
+DF_SWIX_Ret <- 
+    DF_SWIX %>%
+    group_by(date) %>% 
+    summarise(PortfolioReturn = sum(Return*weight, na.rm =TRUE)) %>% 
+      filter(PortfolioReturn != 0)
+         
+```
+
+Let's graph the above differences to provide a clear analysis of the difference in returns. 
+```{r}
+Cum_ALSI <- 
+DF_ALSI_Ret %>%
+    mutate(PortfolioReturn = coalesce(PortfolioReturn,0)) %>% 
+    mutate(cumreturn_ALSI = (cumprod(1 + PortfolioReturn))) %>% 
+  # Start at 1
+  mutate(cumreturn_ALSI = cumreturn_ALSI / first(cumreturn_ALSI)) %>% select(-PortfolioReturn)
+
+Cum_SWIX <- 
+DF_SWIX_Ret %>% 
+    mutate(PortfolioReturn = coalesce(PortfolioReturn,0)) %>% 
+    mutate(cumreturn_SWIX = (cumprod(1 + PortfolioReturn))) %>% 
+    mutate(cumreturn_SWIX = cumreturn_SWIX / first(cumreturn_SWIX)) %>% select(-PortfolioReturn)
+
+Cum_Comp <- 
+  left_join(Cum_ALSI, Cum_SWIX, by = "date") %>%
+    gather(Type, Value, -date)
+
+# Now let's plot the wealth index (if you invested R100 in each) of the two portfolios::
+Cum_Comp %>% 
+  group_by(Type) %>% 
+  ggplot() + 
+  geom_line( aes(date, Value, color = Type) ) + 
+    xlab("Date")+
+    ylab("Cumulative Returns (%)")+
+labs(title = "Cumulative Return Strategies between the ALSI and SWIX")+
+  fmxdat::theme_fmx()
+```
+
+The rebalance date is the date on which the index provider will make the appropriate changes to the index, whilst the effective date is when this "reshuffling" becomes effective. The rebalance days must be utilised, as these are the days for managers to make appropriate changes. Although things may differ before the balance period, you will not be able to make any changes before the effective date. 
+
+We note that two different trading platforms are provided, which means that if there is a difference between the two, then the investor could be making a loss by holding the same stock on the wrong platform. 
+
+```{r}
+Reb_dates <- RebDays %>% 
+    filter(Date_Type == "Reb Trade Day") %>% 
+    pull(date)
+ALSI_reduced <- ALSI %>% filter(date %in% Reb_dates)
+```
+Let's see how long the data spans. 
+```{r}
+ALSI_reduced %>% 
+    mutate(YR=as.numeric(format(date, "%Y"))) %>% 
+    summarise(length = max(YR)-min(YR))
+```
+Note that the data set spans over ten years.
+
+
+```{r}
+ALSI %>% select(-Return)
+
+```
+
+
+# Question Four: Flows Analysis
+
+```{r}
+Flows <- read_rds("data/ASISA_Flows.rds")
+Rets <- read_rds("data/ASISA_Rets.rds")
+```
+
+
+
+
+# Question Five
+This question provides a lot of information relating to currencies. I have decided to utilise the _cncy_IV_ and the _cncy_ data sets, as I thought it was the most applicable to this question after reading the text files provided for each data set. 
+```{r}
+cncy <- read_rds("data/currencies.rds")
+cncy_Carry <- read_rds("data/cncy_Carry.rds")
+cncy_value <- read_rds("data/cncy_value.rds")
+cncyIV <- read_rds("data/cncyIV.rds")
+bbdxy <- read_rds("data/bbdxy.rds")
+```
+The _cncyIV_ data set provides an indication of the future volatility of a currency over time. These values are based on what the market foresees in the future. I strictly want to look at the periods between 2010 and 2020.
+
+I restrict the number of nations to only look at the G10 nations, however, there are only five G10 nations present in the data set. I utlise the EU information as a proxy for France, as they are not in the data set, but use the Euro.
+```{r}
+#G10 nations from data set
+G10_nations <- c("Canada", "Japan", "Sweden", "UK", "EU", "SouthAfrica")
+
+#Clean the data sets
+cncy <- cncy %>% 
+    spread(Name, Price)
+colnames(cncy) <- gsub("_Cncy", "", colnames(cncy))
+colnames(cncy) <- gsub("_Inv", "", colnames(cncy))
+cncy <- cncy %>% 
+    gather(Name, Price, -date)
+
+cncyIV <- cncyIV %>% 
+    spread(Name, Price)
+colnames(cncyIV) <- gsub("_IV", "", colnames(cncyIV))
+cncyIV <- cncyIV %>% 
+    gather(Name, Price, -date)
+
+#The data set is fairly large, so I want to further refine it by looking at specific nations.
+cncyIV %>% 
+    filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>% 
+    filter(Name %in% G10_nations) %>%
+    ggplot()+
+    geom_line(aes(date, Price, color = Name))+
+    ylab("Value")+
+    xlab("Date")+
+    labs(title = "Currency Implied Volatility", 
+         subtitle = "G10 Nations")+
+    fmxdat::theme_fmx()
+```
+We note that South Africa has a high expected volatility compared to the rest of the G10 nations that are present in the data set. Let's look at the rankings of South Africa over time, compared to nations of similar status. I only intend to look at the periods between 2010 and 2020.
+```{r}
+#similar nations
+same <- c("Brazil","Chile","Israel","Malaysia", "Thailand", "SouthAfrica")
+cncyIV %>% filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>% 
+    filter(Name %in% same) %>%
+    ggplot()+
+    geom_line(aes(date, Price, color = Name))+
+    ylab("Value")+
+    xlab("Date")+
+    labs(title = "Currency Implied Volatility",
+         subtitle = "Similar Nations")+
+    fmxdat::theme_fmx()
+```
+South Africa remains to have this high expectation of volatility in the future periods. 
+Let's take a look at the currency movement over time.
+```{r}
+cncy %>% filter(Name %in% same) %>% 
+    filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>% 
+    ggplot()+
+    geom_line(aes(date, Price, color = Name))+
+    facet_wrap(~Name, scales = "free", ncol = 3)+
+    ylab("Value")+
+    xlab("Date")+
+    labs(title = "Currency Movement",
+         subtitle = "Similar Nations")+
+    fmxdat::theme_fmx()
+```
+We note that the movement overall to nations similar to South Africa is fairly similar, except for Israel. This can seem puzzling of why the expected volatility of South Africa stands out compared to nations that have a similar movement as the Rand.
+
+Let's look at the Rand compared to the G10 nations.
+```{r}
+cncy %>% filter(Name %in% G10_nations) %>% 
+    filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>% 
+    ggplot()+
+    geom_line(aes(date, Price, color = Name))+
+    facet_wrap(~Name, scales = "free", ncol = 3)+
+    ylab("Value")+
+    xlab("Date")+
+    labs(title = "Currency Movement",
+         subtitle = "G10 Nations")+
+    fmxdat::theme_fmx()
+```
+The movement of the currency seems relatively the same to the G10 nations, however, this is vastly different from the Implied Volatility graph above. 
+
+Let's take a look at the financial table, as this will provide us with a better indication of the currencies over time.
+ ```{r}
+# #first need to create a simple return for this
+# tem <- cncy %>% 
+#      filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>%
+#     na.locf(cncy$Price, na.rm = FALSE,fromLast = TRUE, maxgap = 4) %>% 
+#     mutate(Year = format(date, "%Y"), Month = format(date, "%B"), Day = format(date, "%A")) %>% 
+#     group_by(Year, Month, Day) %>% 
+#     filter(Day == "Thursday") %>% 
+#     ungroup() %>% 
+#     group_by(Name) %>% 
+#     mutate(Return = Price/lag(Price)-1) %>% 
+#     filter(date>first(date))
+# 
+# temg10 <- tem %>% 
+#     filter(Name %in% G10_nations) %>% 
+#     select(date, Name, Return) %>% 
+#     arrange(date)
+# 
+# BM <- "SouthAfrica"
+# Yrs_lookback <- 3
+# NA_Check <- 0.9
+# 
+# Statistics_table <- function(temg10, BM, Yrs_lookback, NA_Check){
+# 
+#     data_included <- temg10 %>%
+#         filter(date >= fmxdat::safe_year_min(datesel = last(date), N = Yrs_lookback))
+# 
+#     data_considered <- data_included %>%
+#         group_by(Name) %>%
+#         summarise(N_noNA = sum(!is.na(Return))/length(unique(data_included$date))) %>%
+#         filter(N_noNA > NA_Check) %>%
+#         pull(Name)
+# 
+#     data_xts <- data_included %>%
+#         filter(Name %in% data_considered) %>%
+#         tbl_xts(cols_to_xts = Return, spread_by = Name, Colnames_Exact = T)
+# 
+#     Bench_xts <- data_included %>%
+#         filter(Name %in% BM) %>%
+#         tbl_xts(cols_to_xts = Return, Colnames_Exact = T)
+# 
+#     library(PerformanceAnalytics)
+# 
+#     Moments <- bind_rows(
+#         data.frame(Return.cumulative(data_xts) ) %>% round(., 3),
+#         data.frame(Return.annualized(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::Return.annualized.excess(data_xts, Bench_xts) ) %>% round(., 3),
+#         data.frame(sd.annualized(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::AdjustedSharpeRatio( data_xts ) ) %>% round(., 3),
+#         data.frame(PainIndex(data_xts, scale = 12, geometric = T)) %>% round(., 3),
+#         data.frame(AverageDrawdown(data_xts, scale = 12)) %>% round(., 3),
+#         data.frame(fmxdat::Safe_TE(Ra = data_xts, Rb = Bench_xts, scale = 12)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::InformationRatio(Ra = data_xts, Rb = Bench_xts)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::CAPM.beta(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::CAPM.beta.bull(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::CAPM.beta.bear(Ra = data_xts, Rb = Bench_xts, Rf = 0)) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::UpDownRatios(Ra = data_xts, Rb = Bench_xts, method = "Percent", side = "Up")) %>% round(., 3),
+#         data.frame(PerformanceAnalytics::CVaR(R = data_xts, p = 0.05, method = "modified")) %>%
+#             round(., 3)
+#     ) %>% 
+# 
+#     tibble::rownames_to_column("Info") %>%
+#         mutate(Period = glue::glue("Last {Yrs_lookback} Years"),
+#                Info = c("Cum Return", "Return (Ann.)", "Return Excess (Ann.)", "SD (Ann.)", "Adj. Sharpe Ratio", "Pain Index",                                                                          "Avg DD", "Tracking Error", "Information Ratio", "Beta", "Beta Bull", "Beta Bear", "Up-Down Ratio", "Modified CVaR")) %>%
+#         relocate(Period, .before = Info) %>%
+#         as_tibble()
+# 
+#     # This line replaces the `.` with a space.
+#     # Note the forward slashes, as `.` there means everything, `\\.` means a full-stop
+#     colnames(Moments) <- gsub("\\.", " ", colnames(Moments))
+#     Moments
+# }
+# 
+# 
+# 
+# Table <- bind_rows(
+# Statistics_table(temg10, BM, Yrs_lookback = 3, NA_Check),
+# Statistics_table(temg10, BM, Yrs_lookback = 5, NA_Check) )
+# 
+# Make_perc <-c( "Cum Returns", "Returns (Ann.)", "Information Ratio", "SD (Ann.)",
+# "Avg DD", "Modified CVaR")
+# 
+# Rows_to_Perc <-
+# Table %>% 
+#     mutate(RN = row_number()) %>% 
+#     filter(Info %in% Make_perc) %>%
+#     pull(RN)
+# colnams <- colnames(Table)[-1:-2]
+# Cols_length <- ncol(Table)
+# library(gt)
+# 
+# 
+# tab <-
+# Table %>%
+# gt::gt(groupname_col = 'Period', caption = 'Currency Moments Comparison') %>%
+# tab_header(title = glue::glue("Currency Statistics: Relative to {BM}")) %>%
+# fmt_percent(
+# columns = 3:Cols_length,
+# rows = Rows_to_Perc,
+# decimals = 1
+# ) %>%
+# sub_missing(
+# columns = all_of(colnams),
+# missing_text = '-'
+# ) %>%
+# tab_style(
+# style = list(
+# cell_fill(color = 'gray27', alpha = 0.15),
+# cell_text(size = 'large', weight = 'bold',align = 'left')
+# ),
+# locations = cells_row_groups())
+# tab %>%
+# tab_options(data_row.padding = px(4),table.width = pct(100),
+# column_labels.font.size = pct(50),
+# column_labels.vlines.width = 1, table.font.size = pct(80)) %>%
+# tab_options(data_row.padding = px(6),
+# column_labels.font.size = pct(100)) %>%
+# tab_style(style = cell_text(weight = 1200, align = 'left'),locations = cells_title(groups = 'title')) %>%
+# 5
+# tab_style(style = cell_text(color = 'darkgrey', transform = 'uppercase', align = 'center'),
+# locations = cells_column_labels(everything()))
+# 
+```
+Unfortunately, I ran into errors with this table and I am not sure why. 
+I would like to look at the rand movement over time and assess the volatility of it to provide more insight into whether Volatility Index is correct for the ZAR.
+The GARCH for the South African Rand.
+```{r}
+SA <- cncy %>% 
+    filter(Name == "SouthAfrica") %>% 
+     filter(date > lubridate::ymd(20091231) & date < lubridate::ymd(20200101)) %>%
+    na.locf(cncy$Price, na.rm = FALSE,fromLast = TRUE, maxgap = 4) %>% 
+    mutate(Year = format(date, "%Y"), Month = format(date, "%B"), Day = format(date, "%A")) %>% 
+    filter(Day == "Wednesday") %>% #look at weekly data, as daily rates may not change whcih will provide no movemnt in currency
+    mutate(Movement = Price/lag(Price)-1) %>% 
+    filter(date > first(date)) %>% 
+    select(-Year, -Month, -Day)
+
+   SA %>%  
+    mutate(SAsd = sqrt(Movement^2)) %>% 
+    mutate(Absret = abs(Movement)) %>% 
+    select(Movement, SAsd, Absret, date) %>% 
+    gather(Type, Value, -date) %>% 
+    arrange(date) %>% 
+    ggplot() + 
+geom_line(aes(date, Value, color = Type)) + 
+facet_wrap(~Type) + 
+fmxdat::theme_fmx() + 
+    labs(color = F)
+```
+As the figure shows, there is high movement in the Rand. The standard deviation is volatile, which means that the Rand value is constantly fluctuating. Let's look at the Unconditional volatility.
+```{r}
+SA %>% 
+mutate(SAsd = sqrt(Movement^2)) %>%
+mutate(Constant_var = sd(Movement)) %>% 
+ggplot() + 
+geom_line(aes(date, SAsd), color = "steelblue") + 
+geom_hline(aes(date, yintercept = mean(Constant_var)), color = "red", 
+    alpha = 0.8, size = 2) + 
+    ylab("Standard Deviation of ZAR")+
+    xlab("Date")+
+fmxdat::theme_fmx() + 
+labs(title = "Rand Var vs Constant Var")
+```
+We note a massive difference between the constant variance (red horizontal line) and the movement of the Rand throughout the period. This solidifies that the variance should not be used as a true indicator of risk/volatility. The red line represents heteroskedasticity, we note that the rand variance, in blue is not heteroskedastic. 
+```{r}
+
+SA <- SA %>% 
+    mutate(SAsd = sqrt(Movement^2))
+Randxts <- SA %>% 
+    tbl_xts(., cols_to_xts = Movement)
+
+garch_model <- fGarch::garchFit(formula= ~arma(1,1) + aparch(1,1), data = Randxts , trace = FALSE)
+ets_sd <- ets(SA %>% tbl_xts(cols_to_xts = SAsd), model = "ANN")
+ets_sd_mult <- ets(1e-8 + SA %>% tbl_xts(cols_to_xts = SAsd), model = "MNN")
+std_t <- garch_model@sigma.t
+
+left_join(
+  SA,
+  tibble( date = unique(SA$date), GARCH = std_t), by = "date") %>% 
+
+left_join(
+  .,
+  tibble( date = unique(SA$date), ETS = as.numeric(ets_sd$fitted)), by = "date") %>% 
+  
+  left_join(.,tibble( date = unique(SA$date), ETS_Mult = as.numeric(ets_sd_mult$fitted)), by = "date")  %>% 
+  mutate(Constant_var = sd(Movement)) %>% 
+  mutate(Roller = roll_sd(Movement, n = 100, fill = NA) ) %>% 
+
+  ggplot() + 
+  
+  geom_line(aes(date, SAsd), color = "steelblue" ) + 
+  
+  geom_hline(aes(date, yintercept = mean(Constant_var)), color = "red", alpha  = 0.5, size = 1.5) + 
+  
+  geom_line(aes(date, y = Roller), color = "darkgreen", alpha  = 0.5, size = 1.5) + 
+  
+  geom_line(aes(date, y = ETS), color = "darkblue", alpha  = 0.5, size = 1.5) + 
+  
+  geom_line(aes(date, y = ETS_Mult), color = "darkorange", alpha  = 0.5, size = 1.5) + 
+  
+  geom_line(aes(date, y = GARCH), color = "red", alpha  = 0.9, size = 1.5) + 
+
+  fmxdat::theme_fmx() +
+  
+  labs(title = "Rand Var vs Constant Var vs ETS (A,N,N) vs GARCH") +
+    ylab("Deviation")+
+    xlab("Date")+
+    fmxdat::theme_fmx()
+```
+The figure above displays the true movement of the Rand over time. We note that the
+Exponential Smoothing State Space Model (in darkorange) is the best model to use. It displays an accurate depiction of the ZAR throughout the period.
+
+
+# Question Six: Portfolio Construction 
+The data sets provided contain different asset classes. 
+```{r}
+MAA <- read_rds("data/MAA.rds")
+msci <-read_rds("data/msci.rds") %>%
+filter(Name %in% c("MSCI_ACWI", "MSCI_USA", "MSCI_RE", "MSCI_Jap"))
+```
+
+Let's add the Asset class names to each data set. The _MAA_ data set refers to the Credit and Bond types, whilst the _msci_ data set contains equity information. The _msci_ data set has already been filtered, so a simple character column will be added. The text and image documens were used to provided more insight into what each of the asset Names are classified as.
+```{r}
+#Identify what is important from the MAA data set, by looking at the text document and image provided.
+Bonds <- c("Bbg_EuroBonds_UnhedgedEUR", "Bbg_GlBonds_HedgedUSD", "Bbg_USBonds_UnhedgedUSD")
+Credit <- c("Bbg_EUCorpCred_Unhedged_USD","Bbg_GlCorpCred_Hedged_USD","Bbg_USCorpCred_Unhedged_USD") 
+Equity <- c("MSCI_ACWI", "MSCI_USA", "MSCI_RE", "MSCI_Jap")
+
+MAA <- MAA %>% 
+    mutate(Class = ifelse(Name %in% Bonds, "Bonds",
+               ifelse(Name %in% Credit, "Credit",
+               ifelse( Name == c("Asia_dollar_Idx","Dollar_Idx"), "Currency", "Commodity"))))
+
+#msci only contains equity data
+msci <- msci %>% 
+    mutate(Class = "Equity")
+
+#Combine Data sets
+full_set <- full_join(MAA %>% select(date, Name, Price, Class), msci) %>%
+    arrange(date)
+```
+Now that we have the full data set, let's filter it by the constraints provided.
+```{r}
+library(lubridate)
+#Only want data from 2010 onwards and only select that is present for more than 3 years. 
+
+full_set <- full_set %>% 
+    filter(date > lubridate::ymd(20091231) ) %>% 
+    mutate(Year = format(date, "%Y"), Month = format(date,"%B"), Day = format(date, "%A")) %>%
+    group_by(Name) %>% 
+    filter(n_distinct(Year) > 3) %>% 
+    ungroup()
+
+#no rebalnce period month and day was provided, only that it needs to be done every quarter, so I will utilise the rebalance period according to the S&P 500 Index.Here the portfolio's are rebalanced on a quarterly basis from March, and it is usually on the third Friday.
+
+full_set_reb <- full_set %>% 
+    filter(Month %in% c("March","June", "September", "December")) %>% 
+    select(date, Year, Month, Day) %>% 
+    unique() %>% 
+    group_by(Month) %>% 
+    filter(Day == "Friday") %>% 
+    group_by(Year, Month) %>% 
+    slice(3) %>% #to get the third friay of the month
+    ungroup() %>% 
+    arrange(date)
+
+#Now let's filter this rebalance period out.
+full_set_filtered <- full_set %>% 
+    filter(date %in% full_set_reb$date)
+```
+Now the constraints are implemented, let's look at the returns for each.
+```{r}
+Return <- full_set_filtered %>% 
+    group_by(Name,Class) %>% 
+    mutate(Returns = Price/lag(Price)-1) %>% #simple returns
+    filter(date > first(date)) %>% 
+    select(-Year,-Month,-Day) %>% 
+    ungroup()
+```
+In order to optimise the portfolio, we need to assess the data and note if there are any missing values. 
+```{r}
+library(tbl2xts)
+Returnx <- Return %>% select(date, Name, Returns) %>% 
+    spread(Name, Returns)
+
+colSums(is.na(Returnx))
+```
+We note that there is only two missing pieces of data, as not all the asset classes begin from the same date. Therefore, we will need to utilise the _filling_in_the_gaps_ function to deal with this issue. We will use the _Drawn_Distribution_Own_ method.
+```{r}
+source("C:/Users/tashe/Desktop/Financial Econometrics Exam/code/Missing_Data.R")
+Returnx <- filling_in_the_gaps(Returnx, fill_amalgam = "Drawn_Distribution_Own")
+#now convert to xts format
+colSums(is.na(Returnx)) 
+```
+Now that the data set is square, we are able to get the variance, mean and add additional constraints for the portfolio. This needs to be done before we are able to identify the optimal weights vector. 
+```{r}
+Returnx_dateless <- data.matrix(Returnx[,-1])
+
+
+#variance (Sigma)
+Sigma <- RiskPortfolios::covEstimation(Returnx_dateless)
+Mean <- Returnx %>% 
+    summarise(across(.cols = -date, .fns = ~prod(1+.)^(1/n())-1 )) %>% 
+    purrr::as_vector()
+```
+
+```{r}
+#Re-organise
+Returnx_upper <- Returnx %>% 
+    mutate(across(.cols = -date, .fns = ~prod(1+.)^(1/n())-1 )) %>% 
+    gather(Ticker, Returns,-date) %>% 
+    mutate(Class = ifelse(Ticker %in% Bonds, "Bonds",
+               ifelse(Ticker %in% Credit, "Credit",
+                      ifelse( Ticker %in% Equity, "Equity",
+               ifelse( Ticker == c("Asia_dollar_Idx","Dollar_Idx"), "Currency", "Commodity"))))) %>% 
+    mutate(UB = ifelse(Class == 'Equity',0.6, 
+                       ifelse(Class %in% c('Commodity','Currency'), 0.15, 0.125))) #I want the split between bonds and credit to be even.
+```
+Now we have the appropriate variance (Sigma) and returns (Mean). Furthermore, the upperbound of each asset class is provided. I now want to get the optimal weights allocation for the portfolio. 
+```{r}
+#Let's first run the upper-bound limit on all asset classes
+source("C:/Users/tashe/Desktop/Financial Econometrics Exam/code/Optimiser.R")
+
+UB <- 0.4 # maximum exposure of each asset
+LB <- 0.001
+mu <- Mean
+
+#Now let's get the optimal weights vector for each asset class
+Weight_rest <- optim_foo(Type = "mv", mu, Sigma, LB, UB, printmsg = T )
+
+#now we need to reallocate the optimal weights according to the constraints provided
+Weight_Rest <- Weight_rest %>%
+    mutate(Weight_cap = ifelse(Tickers %in% Bonds, 0.125,
+                                 ifelse(Tickers %in% Credit, 0.125,
+                                        ifelse(Tickers %in% Equity, 0.6, 0.075))))
+```
+The optimal portfolio weights are provided under the weight column. All the weights are under the restriction, but do not balance to 100. Therefore, I am not certain what occured.
+```{r}
+names(Weight_Rest) <- c("Tickers", "weight", "Result", "Weight_cap")
+source("C:/Users/tashe/Desktop/Financial Econometrics Exam/code/Cap.R")
+
+Proportional_Cap_Foo(Weight_Rest %>% filter(Weight_cap == 0.6), 0.6)
+```
+This is an attempt to see if the portfolio weights shift proportionally to other assets, based on the restrictions. However, the weights are exactly the same for the Equities.

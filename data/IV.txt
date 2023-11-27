@@ -1,0 +1,3 @@
+Definition of IV series:
+
+VIX gives the US volatility index as measured by the CBOE Vix Index. V2X is the European version of VIX, while VXEEM is the Emerging market version of IV.
